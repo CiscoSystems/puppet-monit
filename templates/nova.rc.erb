@@ -1,0 +1,55 @@
+check process nova-compute matching "nova-compute"
+    start program = "/usr/sbin/service nova-compute start" with timeout 90 seconds
+    stop program  = "/usr/sbin/service nova-compute stop"
+    if 3 restarts within 3 cycles then exec "/usr/local/mon2nagios/notifier -s CRITICAL -n nova-compute -m 'CRITICAL - nova-compute failed'"
+       
+#check process nova-scheduler matching "nova-scheduler"
+#    start program = "/usr/sbin/service nova-scheduler start" with timeout 90 seconds
+#    stop program  = "/usr/sbin/service nova-scheduler stop"
+#    if 3 restarts within 3 cycles then exec "/usr/local/mon2nagios/notifier -s CRITICAL -n nova-scheduler -m 'CRITICAL - nova-scheduler failed'"
+
+
+check process nova-network matching "nova-network"
+    start program = "/usr/sbin/service nova-network start" with timeout 90 seconds
+    stop program  = "/usr/sbin/service nova-network stop"
+    if 3 restarts within 3 cycles then exec "/usr/local/mon2nagios/notifier -s CRITICAL -n nova-network -m 'CRITICAL - nova-network failed'"
+
+check process nova-volume matching "nova-volume"
+    start program = "/usr/sbin/service nova-volume start" with timeout 90 seconds
+    stop program  = "/usr/sbin/service nova-volume stop"
+    if 3 restarts within 3 cycles then exec "/usr/local/mon2nagios/notifier -s CRITICAL -n nova-volume -m 'CRITICAL - nova-volume failed'"
+
+check process nova-api matching "nova-api"
+    start program = "/usr/sbin/service nova-api start" with timeout 90 seconds
+    #start program = "/usr/sbin/service nova-api start && /usr/local/mon2nagios/notifier -s OK -n nova-api -m 'OK - Nova API Normal'" with timeout 90 seconds
+    stop program  = "/usr/sbin/service nova-api stop"
+    if failed host <%= fqdn %> port 8773 then restart else if recovered then exec "/usr/local/mon2nagios/notifier -s OK -n nova-api -m 'OK - Nova API Normal'"
+    if failed host <%= fqdn %> port 8774 then restart else if recovered then exec "/usr/local/mon2nagios/notifier -s OK -n nova-api -m 'OK - Nova API Normal'"
+    if failed host <%= fqdn %> port 8775 then restart else if recovered then exec "/usr/local/mon2nagios/notifier -s OK -n nova-api -m 'OK - Nova API Normal'"
+    if failed host <%= fqdn %> port 8776 then restart else if recovered then exec "/usr/local/mon2nagios/notifier -s OK -n nova-api -m 'OK - Nova API Normal'"
+    if 5 restarts within 5 cycles then exec "/usr/local/mon2nagios/notifier -s CRITICAL -n nova-api -m 'CRITICAL - nova-api failed'"
+       
+
+check file nova-api-log with path /var/log/nova/nova-api.log
+    if match '(ERROR|TRACE|CRITICAL)' then exec "/etc/monit/plugins/latestrrmsg  /var/log/nova/nova-api.log nova-api-log "
+
+#check file nova-cert-log with path /var/log/nova/nova-cert.log
+#    if match '(ERROR|TRACE|CRITICAL)' then exec "/etc/monit/plugins/latestrrmsg  /var/log/nova/nova-cert.log nova-cert-log "
+
+check file nova-compute-log with path /var/log/nova/nova-compute.log
+    if match '(ERROR|TRACE|CRITICAL)' then exec "/etc/monit/plugins/latestrrmsg  /var/log/nova/nova-compute.log nova-compute-log "
+
+check file nova-network-log with path /var/log/nova/nova-network.log
+    if match '(ERROR|TRACE|CRITICAL)' then exec "/etc/monit/plugins/latestrrmsg  /var/log/nova/nova-network.log nova-network-log "
+
+#check file nova-scheduler-log with path /var/log/nova/nova-scheduler.log
+#    if match '(ERROR|TRACE|CRITICAL)' then exec "/etc/monit/plugins/latestrrmsg  /var/log/nova/nova-scheduler.log nova-scheduler-log "
+
+
+check file nova-volume-log with path /var/log/nova/nova-volume.log
+    if match '(ERROR|TRACE|CRITICAL)' then exec "/etc/monit/plugins/latestrrmsg  /var/log/nova/nova-volume.log nova-volume-log "
+
+
+check file nova-dhcpbridge-log with path /var/log/nova/nova-dhcpbridge.log
+    if match '(ERROR|TRACE|CRITICAL)' then exec "/etc/monit/plugins/latestrrmsg  /var/log/nova/nova-dhcpbridge.log nova-dhcpbridge-log "
+

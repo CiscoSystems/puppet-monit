@@ -1,0 +1,2 @@
+check program glance_e2e with path "/opt/monit/scripts/glance_e2e.bash"
+        if status != 0 then exec "/opt/monitplugins/sys/processdown glance_e2e CRITICAL <%= bmc_server %> <%= event_class %>"

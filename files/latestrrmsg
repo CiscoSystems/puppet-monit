@@ -1,0 +1,47 @@
+#!/bin/sh
+
+#Monit SNMP Notifier to nagios
+
+
+#Author: Prashanth Hari
+#Email : hvprash@gmail.com 
+
+#Revision History
+#~~~~~~~~~~~~~~
+#Initial Release Date:06-05-2013
+#######################################
+
+if [ $# -ne 2 ];then
+echo "Usage : $0 LOG_FILE"
+exit 0
+fi
+
+LOG_FILE="$1"
+DEST_TRAP="$2"
+
+HOSTNAME=`hostname`
+
+FILE_NAME="`echo $LOG_FILE | sed 's/\//-/g'`"
+LAST_ERROR_FILE="last$FILE_NAME"
+LAST_ERROR_LOG="/var/log/logparser/$LAST_ERROR_FILE"
+
+if [ ! -f "$LOG_FILE" ];then
+echo "File does not exist : $LOG_FILE"
+fi
+
+CURR_ERROR_MSG="`grep -E -i -w 'error|critical' $LOG_FILE | tail -1`"
+
+if [ -f "$LAST_ERROR_LOG" ];then
+LAST_ERROR_MSG=`cat $LAST_ERROR_LOG`
+if [ "$CURR_ERROR_MSG" = "$LAST_ERROR_MSG" ];then
+return 0
+else
+echo "$CURR_ERROR_MSG" > $LAST_ERROR_LOG
+## Send Trap
+/usr/local/mon2nagios/notifier -s CRITICAL -n $DEST_TRAP -m "CRITICAL - ERROR in $DEST_TRAP - $CURR_ERROR_MSG"
+fi
+else
+echo "$CURR_ERROR_MSG" > $LAST_ERROR_LOG
+/usr/local/mon2nagios/notifier -s CRITICAL -n $DEST_TRAP -m "CRITICAL - ERROR in $DEST_TRAP - $CURR_ERROR_MSG"
+fi
+

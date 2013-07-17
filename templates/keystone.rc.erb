@@ -1,0 +1,10 @@
+check process keystone-all matching "keystone-all"
+  start program  = "/etc/init.d/keystone start" with timeout 10 seconds
+  stop program = "/etc/init.d/keystone stop"
+
+  if failed host <%= hostname %> port 5000 then exec "/usr/local/mon2nagios/notifier -s CRITICAL -n keystone -m 'CRITICAL - Keystone TCP-5000 failed'" else if recovered then exec "/usr/local/mon2nagios/notifier -s OK -n keystone -m 'OK - Keystone Normal'"
+
+  if failed host <%= hostname %> port 35357 then exec "/usr/local/mon2nagios/notifier -s CRITICAL -n keystone -m 'CRITICAL - Keystone TCP-35357 failed'" else if recovered then exec "/usr/local/mon2nagios/notifier -s OK -n keystone -m 'OK - Keystone Normal'"
+
+  if failed url http://<%= hostname %>:5000/healthcheck
+        timeout 3 seconds for 2 cycles then exec "/usr/local/mon2nagios/notifier -s CRITICAL -n keystone -m 'CRITICAL - Keystone Healthcheck failed'" else if recovered then exec "/usr/local/mon2nagios/notifier -s OK -n keystone -m 'OK - Keystone Healthcheck Normal'"

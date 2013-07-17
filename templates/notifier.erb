@@ -1,0 +1,94 @@
+#!/usr/bin/python
+"""
+Monit SNMP Notifier to nagios 
+
+
+Author : Prashanth Hari
+Email  : prashanth_hari@cable.comcast.com
+
+Revision History
+~~~~~~~~~~~~~~~
+Initial Release Date:05-13-2013
+
+"""
+import socket
+import sys
+import os
+import logging
+import ConfigParser
+import commands
+import cPickle as pickle
+import datetime
+import argparse
+
+CONFIG_FILE = "/usr/local/mon2nagios/mon2nagios.conf"
+EVENT_DAT = "/usr/local/mon2nagios/mon2nagios.dat"
+
+pollers = []
+
+config = ConfigParser.ConfigParser()
+config.read([CONFIG_FILE])
+
+try:
+  logfile = config.get("global","logfile")
+  pollers = config.get("global","pollers").split(',')
+except Exception, e:
+    print "Error Reading Configuration File: %s" % e
+    sys.exit(1)
+
+
+logging.basicConfig(level=logging.DEBUG,
+                    format='%(asctime)s -- %(name)-12s -- [%(levelname)-8s] -- (%(threadName)-10s) -- %(message)s',
+                    datefmt='%b %d %H:%M:%S',
+                    filename=logfile,
+                    filemode='a'
+                    )
+
+
+'''Command Line Options'''
+def setCommandOptions():
+    usage='''\n
+    ./monevent.py -s STATE -e  EVENT'''
+    
+    parser = argparse.ArgumentParser(description="Monit Event Notifier", usage=usage)
+
+    parser.add_argument('-s', '--status', help='Event State - OK | CRITICAL | WARNING', required=True)
+    parser.add_argument('-n', '--name', help='Service Name', required=True)
+    parser.add_argument('-m', '--message', help='Alert Message', required=True)
+
+
+    args = parser.parse_args()
+    return args
+    
+
+def alertNagios(snmp_trap_service, status, message):
+    for p in pollers:
+        host_name = socket.gethostbyaddr(socket.gethostname())[0]
+        cmd = '''/usr/local/mon2nagios/trap2nagios  --state %s --service "%s" --output "%s" -nnm %s --hostname %s''' % (status, snmp_trap_service, message, p, host_name)
+        try:
+            command_output = commands.getstatusoutput(cmd)
+            logging.info("Trap send to %s - %s" % (p, cmd))
+        except OSError, e:
+            logging.critical('Send Failed: %s', e)
+
+
+if __name__ == '__main__':
+    options = setCommandOptions()
+    status = options.status
+    service_name = options.name
+    message = options.message
+    snmp_trap_service = config.get("servicemap", service_name)
+
+    events = {}
+    if not os.path.exists(EVENT_DAT):
+        pickle.dump( events, open( EVENT_DAT, "wb" ) )
+
+    events = pickle.load( open( EVENT_DAT, "rb" ) )
+    
+    if service_name in events and events[service_name] == status:
+        pass
+    else:
+        events[service_name] = status
+        alertNagios(snmp_trap_service, status, message)
+        pickle.dump( events, open( EVENT_DAT, "wb" ) )
+

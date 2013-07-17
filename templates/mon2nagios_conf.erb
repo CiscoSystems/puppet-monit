@@ -1,0 +1,44 @@
+[global]
+logfile = /var/log/mon2nagios.log
+pollers = nagios-poller-fqdn-1, nagios-poller-fqdn-2 
+
+[servicemap]
+keystone = Monit - keystone
+glance-registry = Monit - glance-registry
+mysql = Monit - controller-mysqld
+glance-api = Monit - glance-api
+glance-api-log = Monit - glance-api-log-events
+glance-registry = Monit - glance-registry
+glance-registry-log-events = Monit - glance-registry-log-events
+system = Monit - system
+swift-proxy = Monit - swift-proxy
+swift-proxy-log = Monit - swift-proxy-log
+kern-log =  Monit - kern-log
+syslog = Monit - syslog-events
+nova-api = Monit - nova-api
+nova-api-log = Monit - nova-api-log
+nova-compute =  Monit - nova-compute
+nova-compute-log = Monit - nova-compute-log
+nova-scheduler = Monit - nova-scheduler
+nova-scheduler-log = Monit - nova-scheduler-log
+nova-volume = Monit - nova-volume
+nova-volume-log = Monit - nova-volume-log
+nova-dhcpbridge-log = Monit - nova-dhcpbridge
+nova-manage-log = Monit - nova-manage
+nova-network-log = Monit - nova-network-log
+swift-proxy = Monit - swift-proxy
+swift-proxy-log-events = Monit - swift-proxy-log-events
+swift-account = Monit - swift-account
+swift-account-replicator = Monit - swift-account-replicator
+swift-account-auditor = Monit - swift-account-auditor
+swift-account-reaper = Monit - swift-account-reaper
+swift-container = Monit - swift-container
+swift-container-replicator = Monit - swift-container-replicator
+swift-container-auditor = Monit - swift-container-auditor
+swift-container-updater = Monit - swift-container-updater
+swift-object = Monit - swift-object
+swift-object-replicator = Monit - swift-object-replicator
+swift-object-auditor = Monit - swift-object-auditor
+swift-object-updater = Monit - swift-object-updater
+swift-container-sync = Monit - swift-container-sync
+filesystem = Monit - filesystem

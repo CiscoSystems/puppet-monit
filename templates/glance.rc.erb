@@ -1,0 +1,16 @@
+check process glance-registry matching "glance-registry"
+        start program = "/etc/init.d/glance-registry start" with timeout 90 seconds
+        stop program = "/etc/init.d/glance-registry stop"
+        if 3 restarts within 3 cycles then exec "/usr/local/mon2nagios/notifier -s CRITICAL -n glance-registry -m 'CRITICAL - glance-registry failed'"
+
+check process glance-api matching "glance-api"
+        start program = "/etc/init.d/glance-api start" with timeout 90 seconds
+        stop program = "/etc/init.d/glance-api stop"
+        if failed host osctrl-cmc-a01 port 9292 then restart
+        if 5 restarts within 5 cycles then exec "/usr/local/mon2nagios/notifier -s CRITICAL -n glance-api -m 'CRITICAL - glance-api failed'"
+
+## Check for ERROR TRACE CRITICAL errors
+check file glance-api-log with path /var/log/glance/api.log
+    if match '(ERROR|TRACE|CRITICAL)' then exec "/etc/monit/plugins/latestrrmsg /var/log/glance/api.log glance-api-log"
+check file glance-registry-log with path /var/log/glance/registry.log
+    if match '(ERROR|TRACE|CRITICAL)' then exec "/etc/monit/plugins/latestrrmsg /var/log/glance/registry.log glance-registry-log-events"

@@ -1,0 +1,113 @@
+#Account-server processes
+check process swift-account-server with pidfile /var/run/swift/account-server.pid
+       start program = "/etc/init.d/swift-account start" with timeout 5 seconds
+       stop program  = "/etc/init.d/swift-account stop"
+       if failed host <%= fqdn %> port 6002 then restart
+       if failed url http://<%= fqdn %>:6002/healthcheck
+  	        timeout 3 seconds for 2 cycles then exec "/usr/local/mon2nagios/notifier -s CRITICAL -n swift-account-server -m 'CRITICAL - swift-account-server failed'" else if recovered then exec "/usr/local/mon2nagios/notifier -s OK -n swift-account-server -m 'OK - swift-account-server Healthcheck Normal'"
+       if 3 restarts within 3 cycles then exec "/bin/touch /tmp/swift-account-server-CRITICAL"
+       group swift-storage-node-service
+
+check process swift-account-replicator with pidfile /var/run/swift/account-replicator.pid
+       start program = "/etc/init.d/swift-account-replicator start" with timeout 5 seconds
+       stop program  = "/etc/init.d/swift-account-replicator stop"
+       depends on swift-account-server
+       group swift-storage-node-service
+
+check process swift-account-auditor with pidfile /var/run/swift/account-auditor.pid
+       start program = "/etc/init.d/swift-account-auditor start" with timeout 5 seconds
+       stop program  = "/etc/init.d/swift-account-auditor stop"
+       depends on swift-account-server
+       group swift-storage-node-service
+       
+check process swift-account-reaper with pidfile /var/run/swift/account-reaper.pid
+       start program = "/etc/init.d/swift-account-reaper start" with timeout 5 seconds
+       stop program  = "/etc/init.d/swift-account-reaper stop"
+       depends on swift-account-server
+       group swift-storage-node-service
+
+#Container-server processes
+check process swift-container-server with pidfile /var/run/swift/container-server.pid
+       start program = "/etc/init.d/swift-container start" with timeout 5 seconds
+       stop program  = "/etc/init.d/swift-container stop"
+       if failed host <%= fqdn %> port 6001 then restart
+       if failed url http://<%= fqdn %>:6001/healthcheck
+		      timeout 3 seconds for 2 cycles then exec "/usr/local/mon2nagios/notifier -s CRITICAL -n swift-container-server -m 'CRITICAL - swift-container-server failed'" else if recovered then exec "/usr/local/mon2nagios/notifier -s OK -n swift-container-server -m 'OK - swift-container-server Healthcheck Normal'"
+       if 3 restarts within 3 cycles then exec "/usr/local/mon2nagios/notifier -s CRITICAL -n glance-registry -m 'CRITICAL - swift-container-server failed'"
+       group swift-storage-node-service
+
+check process swift-container-replicator with pidfile /var/run/swift/container-replicator.pid
+       start program = "/etc/init.d/swift-container-replicator start" with timeout 5 seconds
+       stop program  = "/etc/init.d/swift-container-replicator stop"
+       depends on swift-container-server
+       group swift-storage-node-service
+
+check process swift-container-auditor with pidfile /var/run/swift/container-auditor.pid
+       start program = "/etc/init.d/swift-container-auditor start" with timeout 5 seconds
+       stop program  = "/etc/init.d/swift-container-auditor stop"
+       depends on swift-container-server
+       group swift-storage-node-service
+       
+check process swift-container-updater with pidfile /var/run/swift/container-updater.pid
+       start program = "/etc/init.d/swift-container-updater start" with timeout 5 seconds
+       stop program  = "/etc/init.d/swift-container-updater stop"
+       depends on swift-container-server
+       group swift-storage-node-service
+       
+#Object-server processes
+check process swift-object-server with pidfile /var/run/swift/object-server.pid
+       start program = "/etc/init.d/swift-object start" with timeout 5 seconds
+       stop program  = "/etc/init.d/swift-object stop"
+       if failed host <%= fqdn %> port 6000 then restart
+       if failed url http://<%= fqdn %>:6000/healthcheck
+		      timeout 3 seconds for 2 cycles then  exec "/usr/local/mon2nagios/notifier -s CRITICAL -n swift-object-server -m 'CRITICAL - swift-object-server failed'" else if recovered then exec "/usr/local/mon2nagios/notifier -s OK -n swift-object-server -m 'OK - swift-object-server Healthcheck Normal'"
+       if 3 restarts within 3 cycles then exec "/usr/local/mon2nagios/notifier -s CRITICAL -n swift-object-server -m 'CRITICAL - swift-object-server'"
+       group swift-storage-node-service
+
+check process swift-object-replicator with pidfile /var/run/swift/object-replicator.pid
+       start program = "/etc/init.d/swift-object-replicator start" with timeout 5 seconds
+       stop program  = "/etc/init.d/swift-object-replicator stop"
+       depends on swift-object-server
+       group swift-storage-node-service
+
+check process swift-object-auditor with pidfile /var/run/swift/object-auditor.pid
+       start program = "/etc/init.d/swift-object-auditor start" with timeout 5 seconds
+       stop program  = "/etc/init.d/swift-object-auditor stop"
+       depends on swift-object-server
+       group swift-storage-node-service
+       
+check process swift-object-updater with pidfile /var/run/swift/object-updater.pid
+       start program = "/etc/init.d/swift-object-updater start" with timeout 5 seconds
+       stop program  = "/etc/init.d/swift-object-updater stop"
+       depends on swift-object-server
+       group swift-storage-node-service      
+       
+#Container-sync processes
+check process swift-container-sync with pidfile /var/run/swift/container-sync.pid
+       start program = "/usr/bin/swift-init container-sync start" with timeout 5 seconds
+       stop program  = "/usr/bin/swift-init container-sync stop"
+       if 3 restarts within 3 cycles then exec "/usr/local/mon2nagios/notifier -s CRITICAL -n swift-container-sync -m 'CRITICAL - swift-container-sync failed'"
+       group swift-storage-node-service
+
+check process xinetd with pidfile /var/run/xinetd.pid
+       start program = "/etc/init.d/xinetd start" with timeout 3 seconds
+       stop program  = "/etc/init.d/xinetd stop"
+       if 3 restarts within 3 cycles then exec "/usr/local/mon2nagios/notifier -s CRITICAL -n xinetd -m 'CRITICAL - xinetd failed'"
+              
+## Check the hard drives which are used by object store
+<% data_volumes.each do |vol| -%>
+check filesystem datafs-<%= vol %> with path /dev/<%= vol %>
+       start program  = "/bin/mount /srv/node/<%= vol %>"
+       stop program  =  "/bin/umount /srv/node/<%= vol %>"
+       #if failed permission 0660 then unmonitor
+       #if failed uid root then unmonitor
+       #if failed gid disk then unmonitor
+       if space usage > 80 % then exec "/usr/local/mon2nagios/notifier -s CRITICAL -n filesystem -m 'CRITICAL - Filesystem Space Usage > 80 % '" 
+       if space usage < 80%  then exec "/usr/local/mon2nagios/notifier -s OK -n filesystem -m 'Filesystem - OK'"
+       if inode usage > 80 % then exec "/usr/local/mon2nagios/notifier -s CRITICAL -n filesystem -m 'CRITICAL - Filesystem Inode Usage > 80 % '" 
+       if space usage < 80 % then exec "/usr/local/mon2nagios/notifier -s OK -n filesystem -m 'Filesystem - OK'"
+<% end -%>      
+
+		
+                 
+

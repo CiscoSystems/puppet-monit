@@ -1,0 +1,744 @@
+#!/usr/bin/env perl
+
+package main;
+
+use warnings;
+use strict;
+use Pod::Usage;
+use Getopt::Long;
+use Net::Domain qw(hostfqdn);
+
+our $VERSION = q{0.2};
+
+my (
+    $opt_help,    $opt_man,    $opt_versions, $opt_state,
+    $opt_service, $opt_output, $opt_nnm, $opt_hostname, $host
+);
+
+Getopt::Long::GetOptions(
+    'state=s'   => \$opt_state,
+    'hostname=s' => \$opt_hostname,
+    'service=s' => \$opt_service,
+    'output=s'  => \$opt_output,
+    'nnm=s'     => \$opt_nnm,
+    'help!'     => \$opt_help,
+    'man!'      => \$opt_man,
+    'versions!' => \$opt_versions,
+  )
+  or Pod::Usage::pod2usage( -verbose => 1 )
+  and exit;
+
+Pod::Usage::pod2usage( -verbose => 1 ) && exit if defined $opt_help;
+Pod::Usage::pod2usage( -verbose => 2 ) && exit if defined $opt_man;
+Pod::Usage::pod2usage( -verbose => 1 ) && exit
+  if ( !defined $opt_state || !defined $opt_service || !defined $opt_output );
+Pod::Usage::pod2usage( -verbose => 1 ) && exit if (@ARGV);
+
+### A few checks
+$opt_state = lc($opt_state);
+if ( $opt_state !~ /ok|warning|critical|unknown/xms ) {
+    print "Invalid State: $opt_state\n";
+    Pod::Usage::pod2usage( -verbose => 1 ) && exit;
+}
+
+### Remove perfdata from output if present
+$opt_output =~ s/\s*\|.+$//ms;
+
+my @event_args = ( $opt_state, $opt_service, $opt_output );
+
+if ( defined $opt_nnm && $opt_nnm ne q{} ) {
+    push( @event_args, $opt_nnm );
+}
+
+NETO::Trap2Nagios::send_trap(@event_args);
+
+END {
+    if ( defined $opt_versions ) {
+        print
+          "\nModules, Perl, OS, Program info:\n",
+          "  trap2nagios        $VERSION\n",
+          "  Pod::Usage         $Pod::Usage::VERSION\n",
+          "  Getopt::Long       $Getopt::Long::VERSION\n",
+          "  Net::Domain        $Net::Domain::VERSION\n",
+          "  Sys::Hostname      $Sys::Hostname::VERSION\n",
+          "  strict             $strict::VERSION\n",
+          "  warnings           $warnings::VERSION\n",
+          "  Perl               $]\n",
+          "  OS                 $^O\n",
+          "  $0\n",
+          "\n\n";
+    }
+}
+
+exit(0);
+
+
+=head1 NAME
+
+ trap2nagios
+
+=head1 USAGE
+
+ trap2nagios --state Critical --service 'Generic Service' --output 'Something bad happened'
+
+=head1 SYNOPSIS
+
+ Default:
+ trap2nagios --state <state> --service <serivce name> --output <text> 
+ 
+ Custom:
+ trap2nagios --state <state> --service <serivce name> --output <text>  --nnm <IP>
+ 
+    --state (ok|critical|warning|unknown)
+    --service (Catch-all 'Generic Event')
+ 
+=head1 DESCRIPTION
+
+ This script makes it really easy to send traps from any program to Nagios.
+ 
+ The script will try 3 different transports for sending the trap in the following
+ order.
+    
+        1- Net::SNMP (perl module)
+        2- sendtrap (Sysedge binary)
+        3- snmptrap (Net-SNMP binary)
+        
+ If the script can't find any of these installed on the host then it will exit with 
+ an error.
+ 
+ The script does not know where to send the trap (ususally this is the Nagios Poller host)
+ so you have to provide that information in one of the following ways:
+ 
+        1- Add the entry to /etc/trap2nagios.cfg (format: NNMS 1.2.3.4)
+        2- Set the ENV Variable SNMP_NNM (export SNMP_NNM=1.2.3.4)
+        3- Pass in the IP via --nnm flag to the script
+        
+ If the script can't find the IP in any of these locations then it will 
+ exit with an error
+ 
+    --service
+    
+ Every host in Nagios has a catch-all passive service defined which is called
+ 'Generic Service'.  If you want to send a trap to Nagios and have not yet set up
+ a specific service in Nagios for this trap, you can send it to the 'Generic
+ Service' as a temporary fix.  The preference is that every specific trap for a
+ host should have a related passive service defined.
+ 
+=head1 ARGUMENTS
+
+ --hostname  MAnually set the hostname.  This can also be done by setting an env var TRAP2NAGIOS_FQDN
+ --state     Must be one of ok|warning|critical|unknown
+ --service   The name of the passive service the trap is associated with in Nagios
+ --output    The string of text describing the trap
+ --help      print Options and Arguments instead running the script
+ --man       print complete man page instead of running the script
+ --versions  print Modules, Perl, OS, Program info
+
+=head1 OPTIONS
+
+ --nnm       The IP of the Nagios host receiving the trap
+
+=head1 AUTHOR
+
+Ryan Richins
+
+=head1 CREDITS
+
+ Nagios is cool
+ 
+=head1 TESTED
+
+    Pod::Usage         1.33
+    Getopt::Long       2.35
+    Net::Domain        2.19
+    strict             1.03
+    warnings           1.05
+    Perl               5.8.8
+
+=head1 BUGS
+
+None that I know of.
+
+=head1 TODO
+
+   
+=head1 UPDATES
+
+ 03/20/2009
+   Initial working code
+
+=cut
+
+package NETO::Trap2Nagios;
+
+use strict;
+use warnings;
+use Carp qw ( croak );
+use English qw( -no_match_vars );
+use Net::Domain qw( hostfqdn );
+use Sys::Hostname;
+use Data::Dumper;
+
+our $VERSION = q{0.0.4};
+
+#  nagios.nagiosNotify.nSvcEvent
+use constant DEBUG => 0;
+use constant SNMP_OID => '1.3.6.1.4.1.20006.1.7';
+use constant SNMP_COMMUNITY => 'sendtrap2nagios';
+use constant SNMP_TIMEOUT => 10;
+
+###########################################################################
+# Usage:        new
+# Purpose:      Constructs the trap2nagios object that will eventually send
+#               the trap.
+# Returns:      a NETO::Trap2Nagios object
+# Parameters:   By default no params need to be passed in but the following are
+#               accepted
+#               {'snmp_nnm'} => <IP of the Node Manager where the trap will go>
+#               {'cfg_file'} => <file where the Node Manager IP is defined>
+#                               <default = /etc/trap2nagios.cfg>
+# Throws:       Nothing, but will return any error string to the calling code
+# Comments:     If no options are passed into this routine the the script expects
+#               to find the IP for the NNM either in the cfg_file, in an env var
+#               (SNMP_NNM) or passed in to the method that sends the trap.
+#                 my $foo = NETO::Trap2Nagios->new();
+#                 my $foo = NETO::Trap2Nagios->new( {'snmp_nnm' => '1.2.3.4'} );
+# See Also:
+# Visibility:   Public
+###########################################################################
+sub new {
+
+    my ( $class, $user_opts ) = @_;
+
+    if ( ( defined $user_opts ) && ( ref($user_opts) ne 'HASH' ) ) {
+        croak "Options must be passed in as a hash ref!";
+    }
+
+    my %opts = (
+        'snmp_nnm' => q{},
+        'cfg_file' => '/etc/trap2nagios.cfg',
+    );
+
+    ### Only set our %opts hash based on the keys that we set up.  Don't blindly
+    ### Add options if they are passed in by the user.  A bit defensive but..
+    for my $option ( keys %opts ) {
+        if (   ( exists $user_opts->{$option} )
+            && ( defined $user_opts->{$option} ) )
+        {
+            $opts{$option} = $user_opts->{$option};
+        }
+    }
+
+    ### Add other data now to the default options (HoH)
+    $opts{'states'} = {
+        qw( ok    0
+            warning  1
+            critical 2
+            unknown  3
+            )
+    };
+
+    ### Get the NNM IP from Params, EnvVar, ConfigFile
+    if ( $opts{'snmp_nnm'} eq q{} ) {
+        if ( defined $ENV{'SNMP_NNM'} ) {
+            $opts{'snmp_nnm'} = $ENV{'SNMP_NNM'};
+        }
+        elsif ( -e $opts{'cfg_file'} ) {
+            $opts{'snmp_nnm'} = _get_nnms_from_config( $opts{'cfg_file'} );
+        }
+    }
+
+    return bless \%opts, $class;
+
+}
+
+###########################################################################
+# Usage:        send_trap
+# Purpose:      Constructs the SNMP command that will get executed.
+# Returns:      0 = success || failure string
+# Parameters:   $self = The instance
+#               $state = 'OK | Warning | Critical | Unknown'
+#               $service = The service this trap is for as it is defined
+#                'Generic Service' is defined for every host in Nagios
+#               $output = Output you want to send to the trap and see in
+#                Nagios along with any alerts
+#               $nnms = The IP of the host where the trap should be
+#                sent.
+# Throws:       Nothing, but will return any error string to the calling code
+# Comments:     The goal of this routine is to send a trap to a host.  The
+#                calling script should just be able to pass in the required
+#                params and the trap will be fowarded to Nagios.  The thing
+#                to remember is that a service needs to be defined in Nagios
+#                for the trap to be associated with.
+# See Also:
+# Visibility:   Public
+###########################################################################
+sub send_trap {
+    my ( $self, @opts ) = @_;
+
+    my ( $state, $service, $output, $nnms ) = q{};
+
+    #TODO  Not the best way to do things... Maybe we can split this up into
+    # 2 API calls later.
+    ### If we were called as a class method, then create an object and move on
+    if ( !ref $self ) {
+        ( $service, $output, $nnms ) = @opts;
+        $state = $self;
+        $self  = NETO::Trap2Nagios->new();
+    }
+    else {
+        ### We have been called as an instance method, so go on like normal
+        ( $state, $service, $output, $nnms ) = @opts;
+    }
+
+    ### Verify that we have the data that is needed
+    if ( !$state || !$service || !$output ) {
+        croak(
+            qq{Reqired params not provided to subroutine: },
+            qq{State:$state Service:$service Output:$output\n},
+            qq{Routine called},
+        );
+    }
+
+    ### Get state ID and croak otherwise
+    $state = lc($state);
+    my $state_id = $self->{'states'}{$state};
+    croak(
+        qq{Input not valid: $state\n},
+        qq{Should be one of: },
+        join( q{, }, keys %{ $self->{'states'} } ),
+        qq{\n}, qq{Routine called}
+    ) unless defined $state_id;
+
+    #TODO could move this to new()...thinking about it.
+    ### Find FQDN and croak otherwise
+    if ($opt_hostname) {
+	$host = $opt_hostname;
+    } else {
+    $host
+        = ( $ENV{'TRAP2NAGIOS_FQDN'} ) ? $ENV{'TRAP2NAGIOS_FQDN'} : hostfqdn();
+    croak( qq{Can't determine FQDN of the host using hostfqdn() },
+        qq{for host: }, hostname(), qq{\n}, qq{Routine called} )
+        unless $host;
+    }
+    #  No perfdata allowed in event traps
+    $output =~ s/\s*\|.*$//xms;
+
+    ### If no IP is defined then bail out.
+    if ( defined $nnms ) {
+        $self->{'snmp_nnm'} = $nnms;
+    }
+    else {
+        if (   ( !defined $self->{'snmp_nnm'} )
+            || ( $self->{'snmp_nnm'} eq q{} ) )
+        {
+            croak(
+                qq{Can't determine IP to send trap to \n},
+                qq{Pass in the IP, set ENV[SNMP_NNM] or create $self->{'cfg_file'}\n},
+            );
+        }
+    }
+
+    my $debug_msg = "NNM:$self->{'snmp_nnm'} State:$state Output:$output ";
+
+    ### Try Net::SNMP first, then Sysedge, then Net-SNMP
+    if ( eval { require Net::SNMP } ) {
+
+        my $ret = eval "use Net::SNMP qw(:asn1)";
+
+        ### So becuase of the above eval, the constants exposed by the Net::SNMP
+        ### Module are not available to the script at this point.  We get around
+        ### that by evaling only the constants we want and then there are no
+        ### Bareword or strict subs errors.  It is odd, but works.
+        my %snmp_const = (
+            'TIMETICKS'         => eval "TIMETICKS",
+            'OBJECT_IDENTIFIER' => eval "OBJECT_IDENTIFIER",
+            'OCTET_STRING'      => eval "OCTET_STRING",
+            'INTEGER32'         => eval "INTEGER32",
+            'INTEGER'           => eval "INTEGER",
+        );
+
+        $debug_msg .= "Host:$host Service:$service StateID:$state_id ";
+
+        my @oids = (
+
+            #  Agent sysUptime
+            '1.3.6.1.2.1.1.3.0', $snmp_const{'TIMETICKS'}, int( time() / 100 ),
+            #  Enterprise-specific OID
+            '1.3.6.1.6.3.1.1.4.1.0', $snmp_const{'OBJECT_IDENTIFIER'}, SNMP_OID,
+            #  Host name (nHostname)
+            '1.3.6.1.4.1.20006.1.1.1.2', $snmp_const{'OCTET_STRING'}, $host,
+            #  State ID (nHostStateID)
+            '1.3.6.1.4.1.20006.1.1.1.4', $snmp_const{'INTEGER32'}, 0,
+            #  Service description
+            '1.3.6.1.4.1.20006.1.3.1.6', $snmp_const{'OCTET_STRING'}, $service,
+            #  Service state ID
+            '1.3.6.1.4.1.20006.1.3.1.7', $snmp_const{'INTEGER32'}, $state_id,
+            #  Service attempt
+            '1.3.6.1.4.1.20006.1.3.1.8', $snmp_const{'INTEGER32'}, 1,
+            #  Service duration
+            '1.3.6.1.4.1.20006.1.3.1.9', $snmp_const{'INTEGER'}, 0,
+            #  Service group
+            '1.3.6.1.4.1.20006.1.3.1.10', $snmp_const{'OCTET_STRING'}, 'nogroup',
+            #  Service last check
+            '1.3.6.1.4.1.20006.1.3.1.11', $snmp_const{'INTEGER'}, 0,
+            #  Service last change
+            '1.3.6.1.4.1.20006.1.3.1.12', $snmp_const{'INTEGER'}, 0,
+            #  Service output
+            '1.3.6.1.4.1.20006.1.3.1.17', $snmp_const{'OCTET_STRING'}, $output,
+        );
+
+        eval { $self->_send_trap_via_module( \@oids, $debug_msg ); 1; } or do {
+                if ($EVAL_ERROR) {
+                    croak( qq{Could not send trap via module: $EVAL_ERROR},
+                        qq{Routine called} );
+                }
+            }
+    }
+    else {
+
+        $debug_msg .= "Host:$host Service:$service StateID:$state_id ";
+
+        my %params = (
+
+            # nHostname
+            '1.3.6.1.4.1.20006.1.1.1.2' => $host,
+            # nHoststate - assume up because checks are run from host
+            '1.3.6.1.4.1.20006.1.1.1.4' => 0,
+            #  Service description
+            '1.3.6.1.4.1.20006.1.3.1.6' => $service,
+            #  Service state ID
+            '1.3.6.1.4.1.20006.1.3.1.7' => $state_id,
+            #  Service attempt
+            '1.3.6.1.4.1.20006.1.3.1.8' => 1,
+            #  Service duration
+            '1.3.6.1.4.1.20006.1.3.1.9' => 0,
+            #  Service group
+            '1.3.6.1.4.1.20006.1.3.1.10' => 'nogroup',
+            #  Service last check
+            '1.3.6.1.4.1.20006.1.3.1.11' => 0,
+            #  Service last change
+            '1.3.6.1.4.1.20006.1.3.1.12' => 0,
+            #  Service output
+            '1.3.6.1.4.1.20006.1.3.1.17' => $output,
+        );
+
+        eval { $self->_send_snmptrap_via_binary( \%params, $debug_msg ); 1; }
+            or do {
+                if ($EVAL_ERROR) {
+                    croak( qq{Could not send trap via binary: $EVAL_ERROR},
+                        qq{Routine called} );
+                }
+            }
+    }
+
+    return;
+}
+
+###########################################################################
+# Usage:      _by_oid
+# Purpose:    Sort a list of OIDs in ascending, numeric order.
+# Returns:    -1, 0, ir 1 to indicate if $a is numerically less than,
+#             equal to, or greater than $b.
+# Parameters: Magical $a and $b variables passed in by sort()
+# Throws:     Nothing
+# Comments:   Remove all dots and compare numerically to get correct
+#             sorting order for OIDs.  OIDs must be output in ascending,
+#             numeric order per SNMP RFCs.
+# See Also:
+# Visibility: Private
+###########################################################################
+sub _by_oid {
+
+    my $an = $a;
+    my $bn = $b;
+
+    #  Remove dots to create numbers
+    $an =~ s/\.//xmsg;
+    $bn =~ s/\.//xmsg;
+
+    return $an <=> $bn;
+}
+
+###########################################################################
+# Usage:      _send_trap_via_module
+# Purpose:    Invoke Net::SNMP module to send the trap
+# Returns:    Nothing
+# Parameters: $self = The instance
+#             @oids_ref = The hash of OID's and their associated values
+#             $debug_msg = String that we want to print if DEBUG is on
+# Throws:     Will error if we can set up a Net::SNMP object or we are
+#             unable to send the trap
+# Comments:   
+# See Also:
+# Visibility: Private
+###########################################################################
+sub _send_trap_via_module {
+    my ( $self, $oids_ref, $debug_msg ) = @_;
+
+    ### This should work because we tested to see if the module existed
+    ### before this routine was called.
+    my ( $snmp, $error ) = Net::SNMP->session(
+        '-hostname'  => $self->{'snmp_nnm'},
+        '-port'      => 162,
+        '-version'   => '2c',
+        '-timeout'   => SNMP_TIMEOUT,
+        '-community' => SNMP_COMMUNITY,
+        '-debug'     => DEBUG
+    );
+
+    if ($error) {
+        croak( qq{SNMP session creation failed: $error}, );
+    }
+
+    ### Send the trap
+    if ( !$snmp->snmpv2_trap( '-varbindlist' => $oids_ref ) ) {
+        croak(
+            qq{Unable to send trap to  $self->{'snmp_nnm'}:162:}
+              . $snmp->error(),
+        );
+    }
+
+    $snmp->close();
+
+    if (DEBUG) {
+        print "$debug_msg\n";
+    }
+
+    return;
+}
+
+###########################################################################
+# Usage:      _send_snmptrap_via_binary
+# Purpose:    This routine will choose either the net-snmp or sysedge binary
+#             to send out the trap.
+# Returns:    Nothing
+# Parameters: $self = The instance
+#             $params_ref = The hash of OID's and their associated values
+#             $debug_msg = String that we want to print if DEBUG is on
+# Throws:     Will error if we can set up a Net::SNMP object or we are
+#             unable to send the trap
+# Comments:   
+# See Also:
+# Visibility: Private
+###########################################################################
+sub _send_snmptrap_via_binary {
+    my ( $self, $params_ref, $debug_msg ) = @_;
+
+    ### Try sysedge first then net-snmp binaries
+    if ( my $binary = $self->_find_sysedge_binary() ) {
+
+        ### The sysege binary requires that all of the oids are passed in via
+        ### a file and terminated with Ctrl-d.  So using open in the below 
+        ### fashion will achieve just that.  When the $fh is closed the command
+        ### will be executed.
+        
+        open my $fh, "| $binary $self->{'snmp_nnm'} 6 0 "
+            || croak(
+            qq{Can't execute $binary with necessary options: $OS_ERROR'});
+        print {$fh} SNMP_OID . ' string ' . SNMP_OID . "\n";
+        print {$fh}  join( "\n",
+            map { "$_ string $params_ref->{$_}"; }
+              sort _by_oid( keys %{$params_ref} ) );
+        close $fh;# || croak ( qq{Could not close file handle so trap was not sent: $!} );
+
+        if (DEBUG) {
+            print "$binary $self->{'snmp_nnm'} 6 0 \n" 
+              . SNMP_OID
+              . ' string '
+              . SNMP_OID . "\n"
+              . join( "\n",
+                map { "$_ string $params_ref->{$_}"; }
+                  sort _by_oid( keys %{$params_ref} ) ), "\n";
+        }
+
+    }
+    elsif ( $binary = $self->_find_netsnmp_binary() ) {
+
+        ### The net-snmp binary has more options than sysedge so it is easier
+        ### to set up and execute
+        my $cmd_line =
+            "$binary -v 2c -c "
+          . SNMP_COMMUNITY
+          . " -Lf /dev/null "
+          . "'$self->{'snmp_nnm'}' 1 '"
+          . SNMP_OID . "' "
+          . join( q{ },
+            map { "'$_' s '$params_ref->{$_}'"; }
+              sort _by_oid( keys %{$params_ref} ) )
+          . " 2>&1";
+
+        $self->_execute_trap_command($cmd_line);
+    }
+    else {
+        croak(
+            qq{Was not able to send the trap via Net::SNMP, Net-SNMP, Syedge\n},
+            qq{Verify that one of these transports is installed on this host\n},
+        );
+    }
+
+    return;
+
+}
+
+###########################################################################
+# Usage:      _execute_trap_command
+# Purpose:    This routine actually executes the net-snmp command
+# Returns:    Nothing
+# Parameters: $self = The instance
+#             $command = the snmptrap command 
+# Throws:     Will error if execution of the binary fails
+# Comments:   
+# See Also:
+# Visibility: Private
+###########################################################################
+sub _execute_trap_command {
+    my ( $self, $command ) = @_;
+
+    if (DEBUG) {
+        print "$command\n";
+    }
+
+    my $results = qx{$command};
+
+    if ($results) {
+        croak(
+            qq{Execution of snmptrap command failed\n},
+            qq{Reason: $results},
+            qq{Command was: $command\n},
+            qq{Routine called},
+        );
+    }
+    return;
+}
+
+###########################################################################
+# Usage:        _find_netsnmp_binary
+# Purpose:      Logic to find the snmptrap binary on the host
+# Returns:      Path to the snmptrap binary  || nothing
+# Parameters:   $self = This instance
+# Throws:       Nothing
+# Comments:     The routine is simple.  The snmptrap binary needs to be found
+#                on the host so the trap can be sent.  This code does that :)
+# See Also:
+# Visibility:   Private
+###########################################################################
+sub _find_netsnmp_binary {
+    my ($self) = @_;
+
+    my $os     = $OSNAME;
+    my @others = qw(/sbin /bin /usr/local/sbin /usr/bin /usr/sbin);
+
+    ### Custom install, check first and get out
+    if ( -x '/usr/local/bin/snmptrap' ) {
+        return '/usr/local/bin/snmptrap';
+    }
+
+    ### Start looking in OS specific directories
+    my %locations = (
+        'darwin'  => '/usr/bin/snmptrap',
+        'linux'   => '/usr/bin/snmptrap',
+        'solaris' => '/usr/sfw/bin/snmptrap',
+    );
+
+    my $binary = q{};
+    if ( exists $locations{$os} ) {
+        if ( -x $locations{$os} ) {
+            $binary = $locations{$os};
+        }
+    }
+    else {    # Start looking in other directories
+      FIND_BINARY:
+        for my $dir (@others) {
+            if ( -x "${dir}/snmptrap" ) {
+                $binary = "${dir}/snmptrap";
+                last FIND_BINARY;
+            }
+        }
+    }
+    return $binary;
+}
+
+###########################################################################
+# Usage:        _find_sysedge_binary
+# Purpose:      Logic to find the sendtrap binary on the host
+# Returns:      Path to the sendtrap binary || nothing
+# Parameters:   $self = This instance
+# Throws:       Nothing
+# Comments:     The routine is simple.  The sendtrap binary needs to be found
+#                on the host so the trap can be sent.  This code does that :)
+# See Also:
+# Visibility:   Private
+###########################################################################
+sub _find_sysedge_binary {
+    my ($self) = @_;
+
+    my $binary = '/opt/EMPsysedge/bin/sendtrap';
+
+    if ( -x $binary ) {
+        return $binary;
+    }
+    return;
+
+}
+
+###########################################################################
+# Usage:        _get_nnms_from_config
+# Purpose:      If the IP to the Nagios host is stored in a config file, 
+#               this method will return the IP
+# Returns:      IP of the Nagios server if found
+# Parameters:   $cfg = Path to the cfg file
+# Throws:       Error if cfg file is found but IP can not be pulled out
+# Comments:     
+# See Also:
+# Visibility:   Private
+###########################################################################
+sub _get_nnms_from_config {
+    my ($cfg) = @_;
+
+    my $ip = q{};
+    
+    open my $cfg_file, '<', $cfg
+        or croak "Can't open $cfg : $OS_ERROR";
+
+    while ( my $line = <$cfg_file> ) {
+        if ( $line =~ /NNMS\s+(.*)$/xms ) {
+            $ip = $1;
+            chomp $ip;
+            last;
+        }
+    }
+    close $cfg_file or croak(qq{Could not close file $cfg_file: $OS_ERROR});
+
+    if (!defined $ip) {
+        croak( qq{Could not determine IP from $cfg\n}, 
+            qq{Format is: NNMS <IP>\n},
+        );
+    }
+
+    return $ip;
+}
+
+
+sub _send_test_notification {
+    my $user_cfg = {
+        'snmp_nnm' => '165.137.248.214',
+    };
+
+    my $test_obj = NETO::Trap2Nagios->new($user_cfg);
+
+    for my $state ('ok', 'warning', 'critical', 'unknown') {
+        my $body = "A test service trap from module with state: $state";
+        #  Send a service trap
+        $test_obj->send_trap($state,'Test Trap',$body);
+    }
+
+    return;
+}
+
+if ($0 eq __FILE__) {
+    NETO::Trap2Nagios::_send_test_notification();
+}
+
+1;
+

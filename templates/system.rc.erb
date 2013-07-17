@@ -1,0 +1,22 @@
+check system <%= fqdn %>
+    if loadavg (15min) > 25 for 5 cycles then  exec "/usr/local/mon2nagios/notifier -s CRITICAL -n system -m 'CRITICAL - Load Average > 25'"
+    if memory usage > 90% then  exec "/usr/local/mon2nagios/notifier -s CRITICAL -n system -m 'CRITICAL - Memory Usage > 90% '"
+    if swap usage > 50% then  exec "/usr/local/mon2nagios/notifier -s CRITICAL -n system -m 'CRITICAL - Swap Usage > 50%'"
+    if cpu usage (user) > 80% then  exec "/usr/local/mon2nagios/notifier -s CRITICAL -n system -m 'CRITICAL - cpu usage (user) > 80%'"
+    if cpu usage (system) > 50% then  exec "/usr/local/mon2nagios/notifier -s CRITICAL -n system -m 'CRITICAL - cpu usage (system) > 50%'"
+    if cpu usage (wait) > 20% then  exec "/usr/local/mon2nagios/notifier -s CRITICAL -n system -m 'CRITICAL - cpu usage (wait) > 20%'"
+
+check filesystem rootfs with path /
+    if space usage > 90 % then exec "/usr/local/mon2nagios/notifier -s CRITICAL -n system -m 'CRITICAL - Disk Usage > 90%'" else if recovered then exec "/usr/local/mon2nagios/notifier -s OK -n system -m 'OK - Disk Space Usage < 90%'"
+    if inode usage > 90 % then exec "/usr/local/mon2nagios/notifier -s CRITICAL -n system -m 'CRITICAL - Inode Usage > 90%'" else if recovered then exec "/usr/local/mon2nagios/notifier -s OK -n system -m 'OK - Disk Inode Usage < 90%'"
+
+## Check for ERROR TRACE CRITICAL errors
+#check file dmesg with path /var/log/dmesg
+#    if match '(ERROR|Error|CRITICAL|Critical)' then exec "/usr/local/mon2nagios/notifier -s CRITICAL -n system -m 'CRITICAL - Error in dmesg log'"
+
+check file syslog with path /var/log/syslog
+    if match '(ERROR|Error|CRITICAL|Critical)' then exec "/etc/monit/plugins/latestrrmsg /var/log/syslog syslog "
+
+check file kern-log with path /var/log/kern.log
+    if match '(ERROR|Error|CRITICAL|Critical)' then exec "/etc/monit/plugins/latestrrmsg /var/log/kern.log kern-log"
+

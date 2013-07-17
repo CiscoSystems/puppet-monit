@@ -1,0 +1,5 @@
+check process mysqld matching "mysqld"
+    start program = "/usr/bin/service mysql start" with timeout 90 seconds
+    stop program  = "/usr/bin/service mysql stop"
+  if failed port 3306 then restart
+        if 3 restarts within 3 cycles then exec "/usr/local/mon2nagios/notifier -s CRITICAL -n mysql -m 'CRITICAL - Mysql Down'"
